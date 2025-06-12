@@ -321,6 +321,32 @@ inline void normalize(float*v) {
     v[i] = (norm_std[i] < 1e-6f) ? 0.0f : (v[i] - norm_mean[i]) / norm_std[i];
   }
 }
+void updateUserStatus(bool needHelp, const String &reason) {
+  // Lấy timestamp hiện tại (ISO 8601)
+  struct tm tm;
+  char ts[25];
+  if (getLocalTime(&tm, 200)) {
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
+  } else {
+    strcpy(ts, "");  // fallback
+  }
+
+  // Chuẩn bị JSON
+  FirebaseJson statusJson;
+  statusJson.add("needHelp", needHelp);
+  statusJson.add("reason", reason);
+  statusJson.add("reportedAt", String(ts));
+
+  // Cập nhật nhánh userStatus
+  String path = "/ESP32/Devices/" + String(DEVICE_ID) + "/userStatus";
+  bool ok = Firebase.RTDB.setJSON(&fbdo, path.c_str(), &statusJson);
+  if (!ok) {
+    Serial.printf("updateUserStatus failed: %s\n", fbdo.errorReason().c_str());
+    // Có thể thêm retry hoặc initFirebase() tùy ý
+  } else {
+    Serial.println("updateUserStatus: success");
+  }
+}
 
 void pushDevice() {
   if (!wifiOK) return;
@@ -351,9 +377,12 @@ void pushDevice() {
   // 4) Xử lý kết quả
   if (ok) {
     Serial.println("pushDevice: Thành công");
+    // Cập nhật userStatus mặc định mỗi lần pushDevice
+     updateUserStatus(false, "is well");
   } else {
     String reason = fbdo.errorReason();
     Serial.printf("pushDevice: Thất bại: %s\n", reason.c_str());
+
 
     // Nếu lỗi liên quan SSL hoặc token expired, gọi lại initFirebase()
     if (reason.indexOf("ssl engine closed") >= 0 ||
@@ -424,7 +453,7 @@ bool updateAlertWithLocation(const String &msg) {
   j.set("location",  getLocation());
   j.set("message",   msg);
   j.set("name",      "Test Device");
-  j.set("Read",      false);
+  j.set("read",      false);
 
   String path = String("/alerts/") + DEVICE_ID;
 
@@ -463,7 +492,7 @@ void startBeepBlink3x() {
 // ==== Hàm xử lý beep 3 lần không dùng delay() ====
 void handleBeepBlink3x(uint32_t now) {
   if (!blinking) return;
-
+  Serial.println("DEBUG: handleBeepBlink3x() đang chạy");
   if (now - lastBeepBlink >= 300) {
     // Toggle buzzer state
     bool buzzerState = digitalRead(BUZZER_PIN);
@@ -591,7 +620,7 @@ void setup() {
 void loop() {
   uint32_t now = millis();
   esp_task_wdt_reset();
-  handleBeepBlink3x(now);
+
   // ==========================
   // 1. Nhấp nháy buzzer + LED khi CONFIRMED_FALL (10s)
   // ==========================
@@ -752,7 +781,8 @@ void loop() {
     fallState = CONFIRMED_FALL;
     if (!safePushAlert("NGƯỜI DÙNG THIẾT BỊ 1 ĐÃ BỊ NGÃ! VUI LÒNG GIÚP ĐỠ")) {
       Serial.println("safePushAlert: Gửi confirmed thất bại.");
-    }    
+    }
+    updateUserStatus(true, "fall detected");    
     // sendAlertSMS("NGUOI DUNG THIET BI 01 DA BI NGA. VUI LONG GIUP DO!!!");
     pauseUntil = now + 10000;
     // Nhấp nháy buzzer+LED 10s sẽ được handle ở bước 1
@@ -778,5 +808,6 @@ void loop() {
   // ==========================
   // 7. Gọi handleBeepBlink3x() cuối cùng
   // ==========================
+  handleBeepBlink3x(now);
   
 }
